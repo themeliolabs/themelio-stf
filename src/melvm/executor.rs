@@ -32,6 +32,8 @@ struct LoopState {
 pub struct Executor {
     pub stack: Vec<Value>,
     pub heap: HashMap<u16, Value>,
+    /// Overflow flag on an op
+    overflow: bool,
     instrs: Vec<OpCode>,
     /// Program counter
     pc: ProgramCounter,
@@ -45,6 +47,7 @@ impl Executor {
         Executor {
             stack: Vec::new(),
             heap: heap_init,
+            overflow: false,
             instrs,
             pc: 0,
             loop_state: vec![],
@@ -93,11 +96,14 @@ impl Executor {
         stack.push(op(x, y, z)?);
         Some(())
     }
-    fn do_binop(&mut self, op: impl Fn(Value, Value) -> Option<Value>) -> Option<()> {
+    fn do_binop(&mut self, op: impl Fn(Value, Value) -> Option<(Value, bool)>) -> Option<()> {
         let stack = &mut self.stack;
         let x = stack.pop()?;
         let y = stack.pop()?;
-        stack.push(op(x, y)?);
+        let (val, oflo) = op(x, y)?;
+        stack.push(val);
+        self.overflow |= oflo;
+
         // eprintln!("stack at {}", stack.len());
         Some(())
     }
@@ -184,26 +190,29 @@ impl Executor {
                     log::trace!("Addition, First: {:?}", &x);
                     log::trace!("Addition, Second: {:?}", &y);
 
-                    Some(Value::Int(x.into_int()?.overflowing_add(y.into_int()?).0))
+                    let (val, oflo) = x.into_int()?.overflowing_add(y.into_int()?);
+                    Some((Value::Int(val), oflo))
                 })?,
                 OpCode::Sub => self.do_binop(|x, y| {
                     log::trace!("Subtraction, First: {:?}", &x);
                     log::trace!("Subtraction, Second: {:?}", &y);
 
-                    Some(Value::Int(x.into_int()?.overflowing_sub(y.into_int()?).0))
+                    let (val, oflo) = x.into_int()?.overflowing_sub(y.into_int()?);
+                    Some((Value::Int(val), oflo))
                 })?,
                 OpCode::Mul => self.do_binop(|x, y| {
                     log::trace!("Multiplication, First: {:?}", &x);
                     log::trace!("Multiplication, Second: {:?}", &y);
 
-                    Some(Value::Int(x.into_int()?.overflowing_mul(y.into_int()?).0))
+                    let (val, oflo) = x.into_int()?.overflowing_mul(y.into_int()?);
+                    Some((Value::Int(val), oflo))
                 })?,
                 OpCode::Div => self
                     .do_binop(|x, y| {
                         log::trace!("Division, First: {:?}", &x);
                         log::trace!("Division, Second: {:?}", &y);
 
-                        Some(Value::Int(x.into_int()?.checked_div(y.into_int()?)?))
+                        Some((Value::Int(x.into_int()?.checked_div(y.into_int()?)?), false))
                     })?,
                 OpCode::Exp(k) => self
                     .do_binop(|b, e| {
@@ -215,6 +224,7 @@ impl Executor {
 
                         let mut res: U256 = U256::ONE;
                         let mut k: u16 = (k as u16)+1;
+                        let mut oflo = false;
 
                         // Exponentiate by squaring
                         while e > U256::ZERO {
@@ -223,36 +233,40 @@ impl Executor {
                             k = k.checked_sub(1)?;
 
                             if e & U256::ONE == U256::ONE {
-                                res = res.overflowing_mul(b).0;
+                                let (r, o) = res.overflowing_mul(b);
+                                res = r;
+                                oflo |= o;
                             }
-                            b = b.overflowing_mul(b).0;
+                            let (_b, o) = b.overflowing_mul(b);
+                            oflo |= o;
+                            b = _b;
 
-                            e >>= 1;
+                            e >>= 1i16;
                         }
 
-                        Some(Value::Int(res))
+                        Some((Value::Int(res), oflo))
                     })?,
                 OpCode::Rem => self
                     .do_binop(|x, y| {
                         log::trace!("Remainder, First: {:?}", &x);
                         log::trace!("Remainder, Second: {:?}", &y);
 
-                        Some(Value::Int(x.into_int()?.checked_rem(y.into_int()?)?))
+                        Some((Value::Int(x.into_int()?.checked_rem(y.into_int()?)?), false))
                     })?,
                 // logic
                 OpCode::And => {
                     self.do_binop(|x, y| {
-                        Some(Value::Int(x.into_int()? & y.into_int()?))
+                        Some((Value::Int(x.into_int()? & y.into_int()?), false))
                     })?
                 }
                 OpCode::Or => {
                     self.do_binop(|x, y| {
-                        Some(Value::Int(x.into_int()? | y.into_int()?))
+                        Some((Value::Int(x.into_int()? | y.into_int()?), false))
                     })?
                 }
                 OpCode::Xor => {
                     self.do_binop(|x, y| {
-                        Some(Value::Int(x.into_int()? ^ y.into_int()?))
+                        Some((Value::Int(x.into_int()? ^ y.into_int()?), false))
                     })?
                 }
                 OpCode::Not => self.do_monop(|x| {
@@ -263,9 +277,9 @@ impl Executor {
                         log::trace!("Equality, First: {}", &x);
                         log::trace!("Equality, Second: {}", &y);
                         if x == y {
-                            Some(Value::Int(1u32.into()))
+                            Some((Value::Int(1u32.into()), false))
                         } else {
-                            Some(Value::Int(0u32.into()))
+                            Some((Value::Int(0u32.into()), false))
                         }
                     }
                     _ => None,
@@ -277,9 +291,9 @@ impl Executor {
                     let x = x.into_int()?;
                     let y = y.into_int()?;
                     if x < y {
-                        Some(Value::Int(1u32.into()))
+                        Some((Value::Int(1u32.into()), false))
                     } else {
-                        Some(Value::Int(0u32.into()))
+                        Some((Value::Int(0u32.into()), false))
                     }
                 })?,
                 OpCode::Gt => self.do_binop(|x, y| {
@@ -289,22 +303,22 @@ impl Executor {
                     let x = x.into_int()?;
                     let y = y.into_int()?;
                     if x > y {
-                        Some(Value::Int(1u32.into()))
+                        Some((Value::Int(1u32.into()), false))
                     } else {
-                        Some(Value::Int(0u32.into()))
+                        Some((Value::Int(0u32.into()), false))
                     }
                 })?,
                 OpCode::Shl => self.do_binop(|x, offset| {
                     let x = x.into_int()?;
                     let offset = offset.into_int()?;
 
-                    Some(Value::Int(x.wrapping_shl(offset.as_u32())))
+                    Some((Value::Int(x.wrapping_shl(offset.as_u32())), false))
                 })?,
                 OpCode::Shr => self.do_binop(|x, offset| {
                     let x = x.into_int()?;
                     let offset = offset.into_int()?;
 
-                    Some(Value::Int(x.wrapping_shr(offset.as_u32())))
+                    Some((Value::Int(x.wrapping_shr(offset.as_u32())), false))
                 })?,
                 // cryptography
                 OpCode::Hash(n) => self.do_monop(|to_hash| {
@@ -385,7 +399,7 @@ impl Executor {
 
                     log::trace!("Loading index {:?} from VM vector containing {:?} onto the stack.", &idx, &vec);
 
-                    Some(vec.into_vector()?.get(idx)?.clone())
+                    Some((vec.into_vector()?.get(idx)?.clone(), false))
                 })?,
                 OpCode::VSet => self.do_triop(|vec, idx, value| {
                     let idx: usize = idx.into_u16()? as usize;
@@ -405,7 +419,7 @@ impl Executor {
 
                     v1.append(v2);
 
-                    Some(Value::Vector(v1))
+                    Some((Value::Vector(v1), false))
                 })?,
                 OpCode::VSlice => self.do_triop(|vec, beginning_value, end_value| {
                     let beginning: usize = beginning_value.into_u16()? as usize;
@@ -459,7 +473,7 @@ impl Executor {
 
                     vec.push_back(item);
 
-                    Some(Value::Vector(vec))
+                    Some((Value::Vector(vec), false))
                 })?,
                 OpCode::VCons => self.do_binop(|item, vec| {
                     let mut vec: CatVec<Value, 32> = vec.into_vector()?;
@@ -468,7 +482,7 @@ impl Executor {
 
                     vec.insert(0, item);
 
-                    Some(Value::Vector(vec))
+                    Some((Value::Vector(vec), false))
                 })?,
                 // bit stuff
                 OpCode::BEmpty => {
@@ -484,7 +498,7 @@ impl Executor {
 
                     vec.push_back(*val.low() as u8);
 
-                    Some(Value::Bytes(vec))
+                    Some((Value::Bytes(vec), false))
                 })?,
                 OpCode::BCons => self.do_binop(|item, vec| {
                     let mut vec: CatVec<u8, 256> = vec.into_bytes()?;
@@ -493,14 +507,14 @@ impl Executor {
 
                     vec.insert(0, item.into_truncated_u8()?);
 
-                    Some(Value::Bytes(vec))
+                    Some((Value::Bytes(vec), false))
                 })?,
                 OpCode::BRef => self.do_binop(|vec, idx| {
                     let idx: usize = idx.into_u16()? as usize;
 
                     log::trace!("Loading index {:?} from a stack byte vector containing {:?} onto the stack.", &idx, &vec);
 
-                    Some(Value::Int(vec.into_bytes()?.get(idx).copied()?.into()))
+                    Some((Value::Int(vec.into_bytes()?.get(idx).copied()?.into()), false))
                 })?,
                 OpCode::BSet => self.do_triop(|vec, idx, value| {
                     let idx: usize = idx.into_u16()? as usize;
@@ -520,7 +534,7 @@ impl Executor {
 
                     v1.append(v2);
 
-                    Some(Value::Bytes(v1))
+                    Some((Value::Bytes(v1), false))
                 })?,
                 OpCode::BSlice => self.do_triop(|vec, beginning_value, end_value| {
                     let beginning: usize = beginning_value.into_u16()? as usize;
@@ -713,6 +727,13 @@ impl Executor {
 
                     self.stack.push(value.clone());
                     self.stack.push(value);
+                }
+                OpCode::Oflo => {
+                    self.stack.push(Value::Int(U256::from(self.overflow)));
+                    self.overflow = false;
+                }
+                OpCode::Cloflo => {
+                    self.overflow = false;
                 }
             }
             Some(())

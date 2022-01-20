@@ -80,4 +80,6 @@ pub(crate) const OPCODE_PUSHB: u8 = 0xf0;
 pub(crate) const OPCODE_PUSHI: u8 = 0xf1;
 pub(crate) const OPCODE_PUSHIC: u8 = 0xf2;
 
+pub(crate) const OPCODE_CLOFLO: u8 = 0xfd;
+pub(crate) const OPCODE_OFLO: u8 = 0xfe;
 pub(crate) const OPCODE_DUP: u8 = 0xff;
