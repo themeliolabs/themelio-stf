@@ -1,4 +1,4 @@
-name: Build
+name: MuslBuild
 
 on:
   push:
@@ -36,7 +36,7 @@ jobs:
       - uses: themeliolabs/actions-mold@v1
 
       - name: Install Musl
-        run: sudo apt install -y musl musl-tools
+        run: apt install -y musl musl-tools
 
       - name: Update Rust
         run: rustup update
