@@ -1,0 +1,57 @@
+name: CodeCoverage
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_HOME: "/usr/local/cargo/"
+  RUSTUP_HOME: "/usr/local/rustup"
+  SCCACHE_DIR: "/usr/local/sccache"
+  RUSTC_WRAPPER: "/usr/local/bin/sccache"
+
+jobs:
+  build:
+
+    runs-on: self-hosted
+
+    container:
+      image: xd009642/tarpaulin:develop-nightly
+      options: --security-opt seccomp=unconfined
+      volumes:
+        - /var/lib/docker:/var/lib/docker
+        - /usr/local/cargo/git:/usr/local/cargo/git
+        - /usr/local/cargo/registry:/usr/local/cargo/registry
+        - /usr/local/sccache:/usr/local/sccache
+        - /usr/local/rustup:/usr/local/rustup
+
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: themeliolabs/actions-sccache@v1
+
+      - uses: themeliolabs/actions-mold@v1
+
+#      - name: Install Musl
+#        run: apt install -y musl musl-tools
+#
+#      - name: Update Rust
+#        run: rustup update
+#
+#      - name: Add Musl Target
+#        run: rustup target add x86_64-unknown-linux-musl
+#
+#      - name: Run Musl Build
+#        run: mold --run cargo build --target x86_64-unknown-linux-musl --verbose
+
+      - name: Generate Code Coverage
+        run: mold --run cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
+
+      - name: Upload To codecov.io
+        uses: codecov/codecov-action@v3
+        with:
+          fail_ci_if_error: true
