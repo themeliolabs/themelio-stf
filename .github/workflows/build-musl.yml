@@ -35,6 +35,9 @@ jobs:
 
       - uses: themeliolabs/actions-mold@v1
 
+      - name: Update Apt
+        run: apt update
+
       - name: Install Musl
         run: apt install -y musl musl-tools
 
