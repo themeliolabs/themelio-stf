@@ -8,25 +8,32 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_HOME: "/usr/local/cargo/"
+  RUSTUP_HOME: "/usr/local/rustup"
+  SCCACHE_DIR: "/usr/local/sccache"
+  RUSTC_WRAPPER: "/usr/local/bin/sccache"
 
 jobs:
   build:
 
+    runs-on: self-hosted
 
-    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/themeliolabs/rust-gtk:latest
+      volumes:
+        - /var/lib/docker:/var/lib/docker
+        - /usr/local/cargo/git:/usr/local/cargo/git
+        - /usr/local/cargo/registry:/usr/local/cargo/registry
+        - /usr/local/sccache:/usr/local/sccache
+        - /usr/local/rustup:/usr/local/rustup
+
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
-      - uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: themeliolabs/actions-sccache@v1
+
+      - uses: themeliolabs/actions-mold@v1
 
       - name: Install Musl
         run: sudo apt install -y musl musl-tools
@@ -38,4 +45,4 @@ jobs:
         run: rustup target add x86_64-unknown-linux-musl
 
       - name: Run Musl Build
-        run: cargo build --target x86_64-unknown-linux-musl --verbose
+        run: mold --run cargo build --target x86_64-unknown-linux-musl --verbose
